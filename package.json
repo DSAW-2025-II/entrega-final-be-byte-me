@@ -1,20 +1,20 @@
 {
   "name": "movetogether2-back",
   "version": "1.0.0",
-  "main": "api/items.ts",
-  "license": "MIT",
+  "type": "commonjs",
   "scripts": {
-    "dev": "vercel dev",
+    "dev": "vercel dev --listen=3001",
     "build": "tsc"
   },
   "dependencies": {
-    "firebase-admin": "^12.5.0",
-    "@vercel/node": "^3.0.0"
+    "firebase-admin": "^12.5.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "@vercel/node": "^3.0.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^22.0.0"
   },
   "engines": {
-    "node": "22.x"
+    "node": "20.x"
   }
 }
