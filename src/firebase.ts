@@ -16,10 +16,19 @@ function initializeFirebase() {
     throw new Error("Missing Firebase env vars: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY");
   }
 
+  // Normalizar la clave privada: manejar tanto \n literales como saltos de línea reales
+  let privateKey = rawPrivateKey;
+  // Si tiene \n literales (como string), convertirlos a saltos de línea reales
+  if (privateKey.includes("\\n")) {
+    privateKey = privateKey.replace(/\\n/g, "\n");
+  }
+  // Si ya tiene saltos de línea pero están mal formateados, asegurar formato correcto
+  privateKey = privateKey.trim();
+
   const serviceAccount = {
     projectId,
     clientEmail,
-    privateKey: rawPrivateKey.replace(/\\n/g, "\n"),
+    privateKey,
   } as admin.ServiceAccount;
 
   if (!admin.apps.length) {
@@ -39,4 +48,11 @@ export function getDb() {
     db = initializeFirebase();
   }
   return db;
+}
+
+export function getAuth() {
+  if (!app) {
+    initializeFirebase();
+  }
+  return admin.auth(app!);
 }
