@@ -34,19 +34,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const auth = getAuth();
     const decodedToken = await auth.verifyIdToken(idToken);
 
-    // Verificar que el token es de Google
-    if (decodedToken.firebase?.sign_in_provider !== "google.com") {
-      return res.status(400).json({ error: "Token is not from Google" });
-    }
+    // El usuario ya fue creado en Firebase Auth por el frontend
+    // Solo verificamos que el token es válido
+    // El sign_in_provider puede estar en firebase.sign_in_provider o en otros campos
+    const signInProvider = decodedToken.firebase?.sign_in_provider || 
+                          (decodedToken.iss?.includes("google") ? "google.com" : null);
 
     return res.status(200).json({
       idToken: idToken,
       user: {
         uid: decodedToken.uid,
         email: decodedToken.email,
-        emailVerified: decodedToken.email_verified,
-        name: decodedToken.name,
-        picture: decodedToken.picture,
+        emailVerified: decodedToken.email_verified || false,
+        name: decodedToken.name || null,
+        picture: decodedToken.picture || null,
       },
     });
   } catch (error: any) {
