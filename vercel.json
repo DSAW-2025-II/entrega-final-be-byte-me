@@ -1,8 +1,13 @@
 {
   "version": 2,
   "buildCommand": "npm run build",
+  "functions": {
+    "api/auth/*.ts": {
+      "memory": 1024
+    }
+  },
   "routes": [
-    { "src": "/api/auth/(.*)", "dest": "/api/auth" },
+    { "src": "/api/auth/(.*)", "dest": "/api/auth/index" },
     { "src": "/api/(.*)", "dest": "/api/$1" }
   ]
 }
