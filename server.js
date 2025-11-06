@@ -6,17 +6,10 @@ const fs = require('fs');
 
 // Importar los handlers compilados
 const itemsHandler = require('./dist/api/items.js').default;
-const loginHandler = require('./dist/api/auth/login.js').default;
-const registerHandler = require('./dist/api/register.js').default;
-const googleHandler = require('./dist/api/auth/google.js').default;
-const verifyHandler = require('./dist/api/auth/verify.js').default;
-const ensureUserHandler = require('./dist/api/auth/ensure-user.js').default;
+const authRouter = require('./dist/api/auth/index.js').default;
 const meHandler = require('./dist/api/me.js').default;
 const vehiclesHandler = require('./dist/api/vehicles.js').default;
 const healthHandler = require('./dist/api/health.js').default;
-const sendOtpHandler = require('./dist/api/auth/send-otp.js').default;
-const verifyOtpHandler = require('./dist/api/auth/verify-otp.js').default;
-const resetPasswordHandler = require('./dist/api/auth/reset-password.js').default;
 
 // Cargar variables de entorno
 require('dotenv').config({ path: '.env.local' });
@@ -174,26 +167,18 @@ const server = http.createServer(async (req, res) => {
       await healthHandler(vercelReq, vercelRes);
     } else if (pathname === '/api/items') {
       await itemsHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/auth/login') {
-      await loginHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/register') {
-      await registerHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/auth/google') {
-      await googleHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/auth/verify') {
-      await verifyHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/auth/ensure-user') {
-      await ensureUserHandler(vercelReq, vercelRes);
+    } else if (pathname.startsWith('/api/auth') || pathname === '/api/register') {
+      // Todas las rutas de auth ahora van al router consolidado
+      // También mantenemos compatibilidad con /api/register (redirige a /api/auth/register)
+      if (pathname === '/api/register') {
+        vercelReq.url = '/api/auth/register';
+        pathname = '/api/auth/register';
+      }
+      await authRouter(vercelReq, vercelRes);
     } else if (pathname === '/api/me') {
       await meHandler(vercelReq, vercelRes);
     } else if (pathname === '/api/vehicles') {
       await vehiclesHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/auth/send-otp') {
-      await sendOtpHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/auth/verify-otp') {
-      await verifyOtpHandler(vercelReq, vercelRes);
-    } else if (pathname === '/api/auth/reset-password') {
-      await resetPasswordHandler(vercelReq, vercelRes);
     } else {
       // Manejar rutas no encontradas
       if (pathname.startsWith('/api/')) {

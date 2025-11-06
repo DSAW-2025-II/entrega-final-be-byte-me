@@ -2,6 +2,7 @@
   "version": 2,
   "buildCommand": "npm run build",
   "routes": [
+    { "src": "/api/auth/(.*)", "dest": "/api/auth" },
     { "src": "/api/(.*)", "dest": "/api/$1" }
   ]
 }
