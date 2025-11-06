@@ -1,13 +1,14 @@
 {
   "version": 2,
   "buildCommand": "npm run build",
-  "functions": {
-    "api/auth/*.ts": {
-      "memory": 1024
-    }
-  },
   "routes": [
     { "src": "/api/auth/(.*)", "dest": "/api/auth/index" },
-    { "src": "/api/(.*)", "dest": "/api/$1" }
+    { "src": "/api/health", "dest": "/api/health" },
+    { "src": "/api/items", "dest": "/api/items" },
+    { "src": "/api/me", "dest": "/api/me" },
+    { "src": "/api/vehicles", "dest": "/api/vehicles" }
+  ],
+  "rewrites": [
+    { "source": "/api/auth/:path*", "destination": "/api/auth/index" }
   ]
 }
