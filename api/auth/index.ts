@@ -1,13 +1,13 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import loginHandler from "./login";
-import googleHandler from "./google";
-import loginGoogleHandler from "./login-google";
-import verifyHandler from "./verify";
-import ensureUserHandler from "./ensure-user";
-import registerHandler from "./register";
-import sendOtpHandler from "./send-otp";
-import verifyOtpHandler from "./verify-otp";
-import resetPasswordHandler from "./reset-password";
+import loginHandler from "../../src/auth/login";
+import googleHandler from "../../src/auth/google";
+import loginGoogleHandler from "../../src/auth/login-google";
+import verifyHandler from "../../src/auth/verify";
+import ensureUserHandler from "../../src/auth/ensure-user";
+import registerHandler from "../../src/auth/register";
+import sendOtpHandler from "../../src/auth/send-otp";
+import verifyOtpHandler from "../../src/auth/verify-otp";
+import resetPasswordHandler from "../../src/auth/reset-password";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Obtener la ruta desde la URL
