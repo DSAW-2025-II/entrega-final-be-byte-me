@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb, getAuth } from "../src/firebase";
+import { computeCorsOrigin } from "../src/utils/cors";
 
 function firstValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) {
@@ -66,29 +67,10 @@ function distancePointToSegmentKm(point: { lat: number; lng: number }, start: { 
   return Math.sqrt((xP - projX) * (xP - projX) + (yP - projY) * (yP - projY));
 }
 
-function resolveCorsOrigin(origin: string | undefined, allowedOrigin: string) {
-  if (!allowedOrigin || allowedOrigin === "*") {
-    console.log("[CORS] wildcard, returning", origin || "*");
-    return origin || "*";
-  }
-
-  const allowedOrigins = allowedOrigin.split(",").map((item) => item.trim());
-  console.log("[CORS] allowed", allowedOrigins, "incoming", origin);
-  if (origin && allowedOrigins.includes(origin)) {
-    return origin;
-  }
-
-  if (origin && (origin.includes("localhost") || origin.includes("127.0.0.1"))) {
-    return origin;
-  }
-
-  return allowedOrigins[0] || "*";
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const origin = req.headers.origin;
   const allowedOrigin = process.env.CORS_ORIGIN || "*";
-  const corsOrigin = resolveCorsOrigin(origin, allowedOrigin);
+  const corsOrigin = computeCorsOrigin(origin, allowedOrigin);
 
   res.setHeader("Access-Control-Allow-Origin", corsOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");

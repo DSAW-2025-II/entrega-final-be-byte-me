@@ -1,11 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-
-const allowList = (process.env.CORS_ORIGIN || "")
-  .split(",").map(s => s.trim()).filter(Boolean);
-
-function allowOrigin(origin = "") {
-  return allowList.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-}
+import { sendEmail } from "../email";
+import { computeCorsOrigin } from "../utils/cors";
 
 // Almacenamiento en memoria para OTP (mock para desarrollo)
 declare global {
@@ -18,14 +13,13 @@ if (!globalThis.__OTP_STORE__) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const origin = req.headers.origin || "";
-  if (allowOrigin(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-  }
+  const origin = req.headers.origin;
+  const corsOrigin = computeCorsOrigin(origin, process.env.CORS_ORIGIN);
+  
+  res.setHeader("Access-Control-Allow-Origin", corsOrigin);
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") {

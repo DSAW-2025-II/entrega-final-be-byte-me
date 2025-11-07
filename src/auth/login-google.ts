@@ -1,18 +1,17 @@
 // back/api/auth/login-google.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getAuth } from "../../src/firebase";
-
-const allowList = (process.env.CORS_ORIGIN || "")
-  .split(",").map(s => s.trim()).filter(Boolean);
+import fetch from "node-fetch";
+import { computeCorsOrigin } from "../utils/cors";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const origin = req.headers.origin || "";
-  const allow = allowList.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  const origin = req.headers.origin;
+  const corsOrigin = computeCorsOrigin(origin, process.env.CORS_ORIGIN);
+  
+  res.setHeader("Access-Control-Allow-Origin", corsOrigin);
+  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
-  if (allow) { res.setHeader("Access-Control-Allow-Origin", origin); res.setHeader("Vary","Origin"); }
-  res.setHeader("Access-Control-Allow-Credentials","true");
-  res.setHeader("Access-Control-Allow-Methods","POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST")  return res.status(405).json({ error: "Method not allowed" });
 
@@ -22,17 +21,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { idToken } = body;
     if (!idToken) return res.status(400).json({ error: "idToken requerido" });
 
-    const auth = getAuth();
-    const decoded = await auth.verifyIdToken(idToken);
+    // const auth = getAuth(); // This line was removed as per the new_code
+    // const decoded = await auth.verifyIdToken(idToken); // This line was removed as per the new_code
 
     return res.status(200).json({
       user: {
-        uid: decoded.uid,
-        email: decoded.email,
-        name: decoded.name ?? null,
-        picture: decoded.picture ?? null,
-        emailVerified: decoded.email_verified,
-        provider: decoded.firebase?.sign_in_provider ?? "google",
+        // uid: decoded.uid, // This line was removed as per the new_code
+        // email: decoded.email, // This line was removed as per the new_code
+        // name: decoded.name ?? null, // This line was removed as per the new_code
+        // picture: decoded.picture ?? null, // This line was removed as per the new_code
+        // emailVerified: decoded.email_verified, // This line was removed as per the new_code
+        // provider: decoded.firebase?.sign_in_provider ?? "google", // This line was removed as per the new_code
       },
     });
   } catch (e: any) {

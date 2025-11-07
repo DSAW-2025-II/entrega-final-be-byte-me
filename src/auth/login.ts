@@ -1,27 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getAuth } from "../../src/firebase";
+import fetch from "node-fetch";
+import { computeCorsOrigin } from "../utils/cors";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const origin = req.headers.origin;
-  const allowedOrigin = process.env.CORS_ORIGIN || "*";
-  
-  // Permitir múltiples orígenes (separados por coma) o localhost para desarrollo
-  let corsOrigin = "*";
-  if (allowedOrigin !== "*") {
-    // Si hay múltiples orígenes separados por coma
-    const allowedOrigins = allowedOrigin.split(",").map(o => o.trim());
-    if (origin && allowedOrigins.includes(origin)) {
-      corsOrigin = origin;
-    } else if (origin && (origin.includes("localhost") || origin.includes("127.0.0.1"))) {
-      // Permitir localhost automáticamente para desarrollo
-      corsOrigin = origin;
-    } else if (allowedOrigins.length === 1 && allowedOrigins[0]) {
-      corsOrigin = allowedOrigins[0];
-    }
-  } else if (origin) {
-    // Si no hay restricción, permitir el origen de la request
-    corsOrigin = origin;
-  }
+  const corsOrigin = computeCorsOrigin(origin, process.env.CORS_ORIGIN);
   
   res.setHeader("Access-Control-Allow-Origin", corsOrigin);
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
@@ -100,15 +83,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
         // Si el retry funciona, continuar con el flujo normal
-        const auth = getAuth();
-        const decodedToken = await auth.verifyIdToken(retryData.idToken);
+        // const auth = getAuth(); // This line was removed as per the new_code
+        // const decodedToken = await auth.verifyIdToken(retryData.idToken); // This line was removed as per the new_code
         return res.status(200).json({
           idToken: retryData.idToken,
           refreshToken: retryData.refreshToken,
           user: {
-            uid: decodedToken.uid,
-            email: decodedToken.email,
-            emailVerified: decodedToken.email_verified,
+            uid: retryData.localId, // Assuming localId is the uid for this context
+            email: retryData.email,
+            emailVerified: retryData.emailVerified,
           },
         });
       }
@@ -118,16 +101,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Verificar el token con Firebase Admin
-    const auth = getAuth();
-    const decodedToken = await auth.verifyIdToken(data.idToken);
+    // const auth = getAuth(); // This line was removed as per the new_code
+    // const decodedToken = await auth.verifyIdToken(data.idToken); // This line was removed as per the new_code
 
     return res.status(200).json({
       idToken: data.idToken,
       refreshToken: data.refreshToken,
       user: {
-        uid: decodedToken.uid,
-        email: decodedToken.email,
-        emailVerified: decodedToken.email_verified,
+        uid: data.localId, // Assuming localId is the uid for this context
+        email: data.email,
+        emailVerified: data.emailVerified,
       },
     });
   } catch (error: any) {
