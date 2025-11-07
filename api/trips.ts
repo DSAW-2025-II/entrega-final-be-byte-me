@@ -68,10 +68,12 @@ function distancePointToSegmentKm(point: { lat: number; lng: number }, start: { 
 
 function resolveCorsOrigin(origin: string | undefined, allowedOrigin: string) {
   if (!allowedOrigin || allowedOrigin === "*") {
+    console.log("[CORS] wildcard, returning", origin || "*");
     return origin || "*";
   }
 
   const allowedOrigins = allowedOrigin.split(",").map((item) => item.trim());
+  console.log("[CORS] allowed", allowedOrigins, "incoming", origin);
   if (origin && allowedOrigins.includes(origin)) {
     return origin;
   }
@@ -147,9 +149,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            .get();
  
         const averageSpeedKmPerMin = 30 / 60; // 0.5 km/min (30 km/h)
-        const baseRouteToleranceKm = 0.25; // ≈250 m para considerar punto sobre la ruta
-        const startEndToleranceKm = 0.5; // ≈500 m para emparejar inicio/fin
-        const fixedExtraMarginKm = 0.15; // margen adicional pequeño
+        const baseRouteToleranceKm = 0.5; // ~500 m para tolerar errores de coordenadas
+        const fixedExtraMarginKm = 0.2; // margen adicional fijo
  
         const trips: any[] = [];
 
@@ -206,13 +207,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const routeDistanceToOrigin = distancePointToSegmentKm(passengerFrom, startCoord, destCoord);
           const routeDistanceToDestination = distancePointToSegmentKm(passengerTo, startCoord, destCoord);
 
-          const originWithinRoute = routeDistanceToOrigin <= baseRouteToleranceKm;
-          const destinationWithinRoute = routeDistanceToDestination <= baseRouteToleranceKm;
-          const originCloseToStart = distanceToOriginKm <= startEndToleranceKm;
-          const destinationCloseToEnd = distanceToDestinationKm <= startEndToleranceKm;
+          const originWithinAllowance =
+            routeDistanceToOrigin <= baseRouteToleranceKm &&
+            distanceToOriginKm <= detourAllowanceKm + baseRouteToleranceKm;
 
-          const originWithinAllowance = originWithinRoute && originCloseToStart;
-          const destinationWithinAllowance = destinationWithinRoute && destinationCloseToEnd;
+          const destinationWithinAllowance =
+            routeDistanceToDestination <= baseRouteToleranceKm &&
+            distanceToDestinationKm <= detourAllowanceKm + baseRouteToleranceKm;
 
           const detourWithinAllowance = extraDistanceKm <= detourAllowanceKm;
 
@@ -244,8 +245,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               ...trip,
               estimated_minutes_detour: Number(estimatedMinutes.toFixed(1)),
               extra_distance_km: Number(extraDistanceKm.toFixed(2)),
-              route_distance_origin_km: Number(routeDistanceToOrigin.toFixed(2)),
-              route_distance_destination_km: Number(routeDistanceToDestination.toFixed(2)),
             });
           }
         });
