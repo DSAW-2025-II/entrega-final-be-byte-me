@@ -44,10 +44,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Guardar o actualizar datos del usuario en Firestore
       const db = getDb();
+      const normalizedUserId = body.user_id ? String(body.user_id).trim() : "";
       const userData = {
         first_name: body.first_name || "",
         last_name: body.last_name || "",
-        user_id: body.user_id || "",
+        user_id: normalizedUserId,
         email: body.email || decodedToken.email || "",
         phone: body.phone || "",
         user_photo: body.user_photo || null,
@@ -58,6 +59,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const userRef = db.collection("users").doc(uid);
       const userDoc = await userRef.get();
       
+      if (normalizedUserId) {
+        const duplicateSnapshot = await db
+          .collection("users")
+          .where("user_id", "==", normalizedUserId)
+          .limit(1)
+          .get();
+
+        const duplicateDoc = duplicateSnapshot.docs.find((doc) => doc.id !== uid);
+        if (duplicateDoc) {
+          return res.status(409).json({
+            error: "El código de la universidad ya está registrado",
+            field: "user_id",
+          });
+        }
+      }
+
       if (userDoc.exists) {
         await userRef.update(userData);
         console.log("✅ Usuario actualizado en Firestore:", uid);
