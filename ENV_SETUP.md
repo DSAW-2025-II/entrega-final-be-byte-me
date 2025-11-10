@@ -78,3 +78,5 @@ El servidor debería iniciar en `http://localhost:3001`
 3. Agrega todas las variables de arriba
 4. **Importante**: Para `FIREBASE_PRIVATE_KEY`, pégala tal cual (con los `\n` literales o con saltos de línea reales)
 
+
+

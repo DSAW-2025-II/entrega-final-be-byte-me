@@ -52,3 +52,5 @@ Después de configurar "None" en Application restrictions:
 4. Intenta hacer login con email/password
 5. Debería funcionar sin el error "referer <empty> are blocked"
 
+
+

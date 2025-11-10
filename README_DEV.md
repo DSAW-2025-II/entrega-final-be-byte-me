@@ -44,3 +44,5 @@ Si ves el error "vercel dev must not recursively invoke itself", significa que V
 
 **Solución**: Usa directamente `npx vercel dev --listen=3001` en lugar de `npm run dev`.
 
+
+

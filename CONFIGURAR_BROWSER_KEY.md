@@ -58,3 +58,5 @@ Esta API Key (`FIREBASE_WEB_API_KEY`) es diferente a:
 
 La "Browser key" se llama así porque Firebase la creó automáticamente, pero en realidad se usa desde el servidor para Firebase Auth REST API.
 
+
+

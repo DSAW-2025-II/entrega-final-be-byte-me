@@ -63,3 +63,5 @@ npm run build
 2. Asegúrate de que `CORS_ORIGIN` apunte a la URL de tu frontend en producción
 3. El backend se despliega automáticamente al hacer push a la rama `main`
 
+
+

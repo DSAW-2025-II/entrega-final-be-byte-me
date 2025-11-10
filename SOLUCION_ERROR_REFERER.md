@@ -71,3 +71,5 @@ Después de configurar, prueba el login:
 - ✅ Login con Google debería funcionar
 - ✅ No debería haber errores 400 en la consola
 
+
+
