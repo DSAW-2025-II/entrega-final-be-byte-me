@@ -137,6 +137,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const baseRouteToleranceKm = 0.5; // ~500 m para tolerar errores de coordenadas
         const fixedExtraMarginKm = 0.2; // margen adicional fijo
  
+        console.log("[Trips search] snapshot size", snapshot.size);
+
         const trips: any[] = [];
 
         snapshot.forEach((doc) => {
@@ -160,19 +162,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
           }
 
-          const startCoord = trip.start?.coordinates;
-          const destCoord = trip.destination?.coordinates;
+          const startLat = toNumber(trip.start?.coordinates?.lat);
+          const startLng = toNumber(trip.start?.coordinates?.lng);
+          const destLat = toNumber(trip.destination?.coordinates?.lat);
+          const destLng = toNumber(trip.destination?.coordinates?.lng);
 
           if (
-            !startCoord ||
-            !destCoord ||
-            typeof startCoord.lat !== "number" ||
-            typeof startCoord.lng !== "number" ||
-            typeof destCoord.lat !== "number" ||
-            typeof destCoord.lng !== "number"
+            startLat === null ||
+            startLng === null ||
+            destLat === null ||
+            destLng === null
           ) {
             return;
           }
+
+          const startCoord = { lat: startLat, lng: startLng };
+          const destCoord = { lat: destLat, lng: destLng };
 
           const driverRouteKm = haversineDistanceKm(startCoord, destCoord);
           const detourRouteKm =
@@ -205,10 +210,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const extraMinutesRequired = estimatedMinutes;
           const minutesAllowance = extraMinutesAvailable + 15; // 15 min margen adicional
 
+          const locationMatches = originWithinAllowance || destinationWithinAllowance;
+
           console.log("[Trips search]", {
             trip_id: doc.id,
             originWithinAllowance,
             destinationWithinAllowance,
+            locationMatches,
             detourWithinAllowance,
             extraMinutesRequired: Number(extraMinutesRequired.toFixed(2)),
             minutesAllowance,
@@ -219,12 +227,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             detourAllowanceKm,
           });
 
-          if (
-            originWithinAllowance &&
-            destinationWithinAllowance &&
-            detourWithinAllowance &&
-            extraMinutesRequired <= minutesAllowance
-          ) {
+          if (locationMatches && detourWithinAllowance && extraMinutesRequired <= minutesAllowance) {
             trips.push({
               trip_id: doc.id,
               ...trip,
