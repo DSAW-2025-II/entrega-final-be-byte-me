@@ -121,11 +121,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            return res.status(400).json({ error: "fromLat, fromLng, toLat and toLng are required for search" });
          }
 
-         const passengerFrom = { lat: fromLat, lng: fromLng };
+        const passengerFrom = { lat: fromLat, lng: fromLng };
          const passengerTo = { lat: toLat, lng: toLng };
          const passengerDateTimeMs = requestedDate
            ? new Date(`${requestedDate}T${requestedTime || "00:00"}:00`).getTime()
            : null;
+
+        const viewerRole = (firstValue(req.query.viewerRole as any) || "").toLowerCase();
+        const includeSelfTrips = viewerRole === "driver";
  
          const snapshot = await db
            .collection("trips")
@@ -144,7 +147,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         snapshot.forEach((doc) => {
           const trip = doc.data() as any;
 
-          if (trip.driver_uid === uid) {
+          if (!includeSelfTrips && trip.driver_uid === uid) {
             return;
           }
 
