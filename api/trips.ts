@@ -477,7 +477,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === "PATCH") {
-      const { trip_id, user_id } = req.body || {};
+      const body: any = req.body || {};
+      const { trip_id, user_id, origin, destination } = body;
+      const rawAction = body.action;
+      const action =
+        typeof rawAction === "string" ? rawAction.toLowerCase().trim() : "";
 
       if (!trip_id) {
         return res.status(400).json({ error: "trip_id is required" });
@@ -496,28 +500,164 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const tripData = tripDoc.data();
       
-      // Verificar si el usuario es el conductor del viaje
+      // Registro completo de la aplicación (se reutiliza para waitlist y my_trips)
+      const applicationRecord: any = {
+        trip_id,
+        firebase_uid: uid,
+        user_id,
+        origin:
+          origin && typeof origin === "object"
+            ? {
+                address: String((origin as any).address || ""),
+                coordinates:
+                  (origin as any).coordinates && typeof (origin as any).coordinates === "object"
+                    ? {
+                        lat: Number((origin as any).coordinates.lat) || null,
+                        lng: Number((origin as any).coordinates.lng) || null,
+                      }
+                    : null,
+              }
+            : null,
+        destination:
+          destination && typeof destination === "object"
+            ? {
+                address: String((destination as any).address || ""),
+                coordinates:
+                  (destination as any).coordinates &&
+                  typeof (destination as any).coordinates === "object"
+                    ? {
+                        lat: Number((destination as any).coordinates.lat) || null,
+                        lng: Number((destination as any).coordinates.lng) || null,
+                      }
+                    : null,
+              }
+            : null,
+        status: "waitlist",
+        appliedAt: new Date().toISOString(),
+      };
+
+      const waitlist = Array.isArray(tripData?.waitlist) ? [...tripData.waitlist] : [];
+
+      // Si la acción es "accept", mover de waitlist a passenger_list
+      if (action === "accept") {
+        // Solo el conductor del viaje puede aceptar pasajeros
+        if (tripData?.driver_uid !== uid && tripData?.driver_id !== uid) {
+          return res.status(403).json({ error: "Only the driver can accept passengers" });
+        }
+
+        const passengers = Array.isArray((tripData as any).passenger_list)
+          ? [...(tripData as any).passenger_list]
+          : [];
+
+        const index = waitlist.findIndex((item: any) => {
+          if (typeof item === "string") return item === user_id;
+          if (item && typeof item === "object" && typeof item.user_id === "string") {
+            return item.user_id === user_id;
+          }
+          return false;
+        });
+
+        if (index === -1) {
+          return res.status(404).json({ error: "User not found in waitlist" });
+        }
+
+        const entry = waitlist[index];
+        const passengerRecord =
+          entry && typeof entry === "object"
+            ? { ...entry, status: "accepted" }
+            : { ...applicationRecord, status: "accepted", movedFrom: "waitlist" };
+
+        waitlist.splice(index, 1);
+        passengers.push(passengerRecord);
+
+        // Actualizar estado en my_trips del PASAJERO ANTES de actualizar el trip (simultáneo)
+        let passengerUid: string | null = null;
+        if (entry && typeof entry === "object" && typeof (entry as any).firebase_uid === "string") {
+          passengerUid = (entry as any).firebase_uid as string;
+        }
+
+        // Actualizar el documento del pasajero simultáneamente
+        if (passengerUid) {
+          try {
+            const userRef = db.collection("users").doc(passengerUid);
+            const userDoc = await userRef.get();
+            if (userDoc.exists) {
+              const userData = userDoc.data() as any;
+              const myTrips = Array.isArray(userData?.my_trips) ? [...userData.my_trips] : [];
+              const updatedTrips = myTrips.map((t: any) => {
+                if (
+                  t &&
+                  typeof t === "object" &&
+                  t.trip_id === trip_id &&
+                  (t.user_id === user_id || !t.user_id)
+                ) {
+                  return { ...t, status: "accepted" };
+                }
+                return t;
+              });
+
+              // Verificar si realmente hubo un cambio
+              const hasChange = JSON.stringify(myTrips) !== JSON.stringify(updatedTrips);
+              if (hasChange) {
+                await userRef.update({
+                  my_trips: updatedTrips,
+                  updatedAt: new Date().toISOString(),
+                });
+                console.log(`[Accept] Updated my_trips for user ${passengerUid}, trip ${trip_id} to accepted`);
+              } else {
+                console.log(`[Accept] No change needed for user ${passengerUid}, trip ${trip_id}`);
+              }
+            } else {
+              console.log(`[Accept] User document ${passengerUid} not found`);
+            }
+          } catch (userUpdateError: any) {
+            console.error(`[Accept] Error updating user ${passengerUid} my_trips:`, userUpdateError);
+            // No fallar la operación principal si falla la actualización del usuario
+          }
+        } else {
+          console.log(`[Accept] Could not extract passengerUid from entry`);
+        }
+
+        // Actualizar el trip (waitlist y passenger_list)
+        await tripRef.update({
+          waitlist,
+          passenger_list: passengers,
+          updatedAt: new Date().toISOString(),
+        });
+
+        return res.status(200).json({
+          message: "User moved to passenger_list",
+          waitlist,
+          passenger_list: passengers,
+        });
+      }
+
+      // Acción por defecto: aplicar al viaje (agregar a waitlist)
+      // Verificar si el usuario es el conductor del viaje (no puede aplicarse a su propio viaje)
       if (tripData?.driver_uid === uid || tripData?.driver_id === uid) {
         return res.status(400).json({ error: "You cannot apply to your own trip" });
       }
 
-      const waitlist = Array.isArray(tripData?.waitlist) ? [...tripData.waitlist] : [];
+      const alreadyInWaitlist = waitlist.some((item: any) => {
+        if (typeof item === "string") return item === user_id;
+        if (item && typeof item === "object" && typeof item.user_id === "string") {
+          return item.user_id === user_id;
+        }
+        return false;
+      });
 
-      // Verificar si el usuario ya está en la waitlist
-      if (waitlist.includes(user_id)) {
+      if (alreadyInWaitlist) {
         return res.status(400).json({ error: "User already in waitlist" });
       }
 
-      // Agregar el user_id a la waitlist
-      waitlist.push(user_id);
+      waitlist.push(applicationRecord);
 
-      // Actualizar el documento del viaje
       await tripRef.update({
         waitlist,
         updatedAt: new Date().toISOString(),
       });
 
-      // Agregar el trip_id a la lista my_trips del usuario
+      // Agregar la aplicación del viaje a la lista my_trips del usuario (como objeto)
       const userRef = db.collection("users").doc(uid);
       const userDoc = await userRef.get();
       
@@ -525,11 +665,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const userData = userDoc.data();
         const myTrips = Array.isArray(userData?.my_trips) ? [...userData.my_trips] : [];
         
-        // Verificar si el trip_id ya está en la lista
-        if (!myTrips.includes(trip_id)) {
-          myTrips.push(trip_id);
+        // Soportar tanto el formato antiguo (string) como el nuevo (objeto)
+        const alreadyExists = myTrips.some((item: any) => {
+          if (typeof item === "string") return item === trip_id;
+          if (item && typeof item === "object" && typeof item.trip_id === "string") {
+            return item.trip_id === trip_id;
+          }
+          return false;
+        });
+
+        if (!alreadyExists) {
+          myTrips.push(applicationRecord);
+
           await userRef.update({
             my_trips: myTrips,
+            updatedAt: new Date().toISOString(),
+          });
+        } else if (action === "accept") {
+          // Si ya existe y la acción es aceptar, actualizar su estado a 'accepted'
+          const updated = myTrips.map((item: any) => {
+            if (
+              item &&
+              typeof item === "object" &&
+              item.trip_id === trip_id &&
+              (item.user_id === user_id || !item.user_id)
+            ) {
+              return { ...item, status: "accepted" };
+            }
+            return item;
+          });
+
+          await userRef.update({
+            my_trips: updated,
             updatedAt: new Date().toISOString(),
           });
         }
