@@ -57,6 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       email: userData?.email || decodedToken.email || null,
       phone: userData?.phone || null,
       user_photo: userData?.user_photo || null,
+      my_trips: Array.isArray(userData?.my_trips) ? userData!.my_trips : [],
     });
   } catch (error: any) {
     console.error("Error in /api/me handler:", error);

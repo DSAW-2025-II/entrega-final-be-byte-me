@@ -91,7 +91,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const corsOrigin = computeCorsOrigin(origin, allowedOrigin);
 
   res.setHeader("Access-Control-Allow-Origin", corsOrigin);
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, X-Requested-With, Accept"
@@ -118,11 +118,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const uid = decodedToken.uid;
 
     const db = getDb();
- 
-     if (req.method === "GET") {
+
+    if (req.method === "GET") {
+      const role = (firstValue((req.query as any).role) || "").toLowerCase();
+
+      // Permitir obtener viajes por una lista de IDs (para la vista de pasajero / my_trips)
+      const idsParam = firstValue((req.query as any).ids);
+      if (idsParam) {
+        const ids = idsParam
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean);
+
+        if (!ids.length) {
+          return res.status(400).json({ error: "ids query param is empty" });
+        }
+
+        const trips: any[] = [];
+        for (const id of ids) {
+          try {
+            const doc = await db.collection("trips").doc(id).get();
+            if (doc.exists) {
+              trips.push({ trip_id: doc.id, ...(doc.data() as any) });
+            }
+          } catch (err) {
+            console.error("Error fetching trip by id", id, err);
+          }
+        }
+
+        const sortedTrips = trips.sort((a, b) => {
+          const dateA = new Date(a.createdAt || 0).getTime();
+          const dateB = new Date(b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+
+        return res.status(200).json({ trips: sortedTrips });
+      }
+
+      // Modo pasajero: viajes donde el user_id del usuario está en la waitlist
+      if (role === "passenger") {
+        const userDoc = await db.collection("users").doc(uid).get();
+        if (!userDoc.exists) {
+          return res.status(404).json({ error: "User not found" });
+        }
+        const userData = userDoc.data() as any;
+        const userId = userData?.user_id;
+        if (!userId) {
+          return res.status(400).json({ error: "User id not found for waitlist" });
+        }
+
+        const snapshot = await db
+          .collection("trips")
+          .where("waitlist", "array-contains", userId)
+          .limit(50)
+          .get();
+
+        const trips = snapshot.docs
+          .map((doc) => ({ trip_id: doc.id, ...(doc.data() as any) }))
+          .sort((a, b) => {
+            const dateA = new Date(a.createdAt || 0).getTime();
+            const dateB = new Date(b.createdAt || 0).getTime();
+            return dateB - dateA;
+          });
+
+        return res.status(200).json({ trips });
+      }
+
       const searchFlag = String((req.query as any).search || "") === "true";
- 
-       if (searchFlag) {
+
+      if (searchFlag) {
          const fromLat = toNumber(firstValue(req.query.fromLat as any));
          const fromLng = toNumber(firstValue(req.query.fromLng as any));
          const toLat = toNumber(firstValue(req.query.toLat as any));
@@ -410,6 +474,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
       const docRef = await db.collection("trips").add(sanitizedTrip);
       return res.status(201).json({ message: "Posted trip", trip_id: docRef.id });
+    }
+
+    if (req.method === "PATCH") {
+      const { trip_id, user_id } = req.body || {};
+
+      if (!trip_id) {
+        return res.status(400).json({ error: "trip_id is required" });
+      }
+
+      if (!user_id) {
+        return res.status(400).json({ error: "user_id is required" });
+      }
+
+      const tripRef = db.collection("trips").doc(trip_id);
+      const tripDoc = await tripRef.get();
+
+      if (!tripDoc.exists) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+
+      const tripData = tripDoc.data();
+      
+      // Verificar si el usuario es el conductor del viaje
+      if (tripData?.driver_uid === uid || tripData?.driver_id === uid) {
+        return res.status(400).json({ error: "You cannot apply to your own trip" });
+      }
+
+      const waitlist = Array.isArray(tripData?.waitlist) ? [...tripData.waitlist] : [];
+
+      // Verificar si el usuario ya está en la waitlist
+      if (waitlist.includes(user_id)) {
+        return res.status(400).json({ error: "User already in waitlist" });
+      }
+
+      // Agregar el user_id a la waitlist
+      waitlist.push(user_id);
+
+      // Actualizar el documento del viaje
+      await tripRef.update({
+        waitlist,
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Agregar el trip_id a la lista my_trips del usuario
+      const userRef = db.collection("users").doc(uid);
+      const userDoc = await userRef.get();
+      
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        const myTrips = Array.isArray(userData?.my_trips) ? [...userData.my_trips] : [];
+        
+        // Verificar si el trip_id ya está en la lista
+        if (!myTrips.includes(trip_id)) {
+          myTrips.push(trip_id);
+          await userRef.update({
+            my_trips: myTrips,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      return res.status(200).json({ message: "User added to waitlist", waitlist });
     }
 
     return res.status(405).json({ error: "Method not allowed" });

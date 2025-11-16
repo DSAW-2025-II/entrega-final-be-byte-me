@@ -123,7 +123,7 @@ const server = http.createServer(async (req, res) => {
       console.log(`   Full URL: ${rawPath}${parsedUrl.search || ''}`);
       console.log(`   Origin: ${req.headers.origin || 'none'}`);
       console.log(`   Auth: ${req.headers.authorization ? 'Bearer ***' : 'none'}`);
-      if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
+      if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE') {
         const bodyStr = typeof vercelReq.body === 'object' ? JSON.stringify(vercelReq.body) : String(vercelReq.body);
         console.log(`   Body:`, bodyStr.substring(0, 300));
       }
