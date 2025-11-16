@@ -483,12 +483,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const action =
         typeof rawAction === "string" ? rawAction.toLowerCase().trim() : "";
 
+      console.log(`[PATCH /api/trips] Raw body:`, JSON.stringify(body));
+      console.log(`[PATCH /api/trips] Raw action: "${rawAction}", Parsed action: "${action}", trip_id: ${trip_id}, user_id: ${user_id}, uid: ${uid}`);
+
       if (!trip_id) {
         return res.status(400).json({ error: "trip_id is required" });
-      }
-
-      if (!user_id) {
-        return res.status(400).json({ error: "user_id is required" });
       }
 
       const tripRef = db.collection("trips").doc(trip_id);
@@ -499,6 +498,401 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const tripData = tripDoc.data();
+
+      // Acción "cancel": cancelar el viaje (solo el conductor puede cancelar)
+      // Esta acción no requiere user_id, solo verifica que el usuario es el conductor
+      if (action === "cancel") {
+        // Solo el conductor del viaje puede cancelar
+        if (tripData?.driver_uid !== uid && tripData?.driver_id !== uid) {
+          return res.status(403).json({ error: "Only the driver can cancel the trip" });
+        }
+
+        // Solo se puede cancelar si el viaje está abierto
+        if (tripData?.status !== "open") {
+          return res.status(400).json({ error: "Only open trips can be cancelled" });
+        }
+
+        // Obtener todos los pasajeros de passenger_list y waitlist para actualizar sus my_trips
+        const passengers = Array.isArray((tripData as any).passenger_list) ? [...(tripData as any).passenger_list] : [];
+        const waitlist = Array.isArray(tripData?.waitlist) ? [...tripData.waitlist] : [];
+        const allPassengers = [...passengers, ...waitlist];
+
+        // Actualizar el estado del viaje a "cancelled"
+        await tripRef.update({
+          status: "cancelled",
+          updatedAt: new Date().toISOString(),
+        });
+
+        // Actualizar el estado en my_trips de todos los pasajeros a "cancelled"
+        const passengerUids = new Set<string>();
+        allPassengers.forEach((p: any) => {
+          if (p && typeof p === "object" && p.firebase_uid) {
+            passengerUids.add(p.firebase_uid);
+          }
+        });
+
+        console.log(`[Cancel] Trip ${trip_id} cancelled by driver ${uid}, updating ${passengerUids.size} passengers`);
+
+        // Actualizar my_trips de cada pasajero
+        const updatePromises = Array.from(passengerUids).map(async (passengerUid) => {
+          try {
+            const passengerUserRef = db.collection("users").doc(passengerUid);
+            const passengerUserDoc = await passengerUserRef.get();
+            
+            if (passengerUserDoc.exists) {
+              const passengerUserData = passengerUserDoc.data();
+              const myTrips = Array.isArray(passengerUserData?.my_trips) ? [...passengerUserData.my_trips] : [];
+              
+              const updatedTrips = myTrips.map((item: any) => {
+                if (typeof item === "string") {
+                  if (item === trip_id) {
+                    return {
+                      trip_id: trip_id,
+                      firebase_uid: passengerUid,
+                      status: "cancelled",
+                      cancelledAt: new Date().toISOString(),
+                      cancelledBy: "driver",
+                    };
+                  }
+                  return item;
+                }
+                if (item && typeof item === "object" && item.trip_id === trip_id) {
+                  return {
+                    ...item,
+                    status: "cancelled",
+                    cancelledAt: new Date().toISOString(),
+                    cancelledBy: "driver",
+                  };
+                }
+                return item;
+              });
+
+              await passengerUserRef.update({
+                my_trips: updatedTrips,
+                updatedAt: new Date().toISOString(),
+              });
+              console.log(`[Cancel] Updated my_trips for passenger ${passengerUid}, trip ${trip_id} to cancelled`);
+            }
+          } catch (error: any) {
+            console.error(`[Cancel] Error updating passenger ${passengerUid} my_trips:`, error);
+          }
+        });
+
+        await Promise.all(updatePromises);
+
+        console.log(`[Cancel] Trip ${trip_id} cancelled by driver ${uid}`);
+
+        return res.status(200).json({
+          message: "Trip cancelled successfully",
+          status: "cancelled",
+        });
+      }
+
+      // Acción "remove_passenger": el conductor remueve a un pasajero específico
+      console.log(`[PATCH /api/trips] Checking action "${action}" === "remove_passenger": ${action === "remove_passenger"}`);
+      if (action === "remove_passenger") {
+        console.log(`[Remove Passenger] Action matched! Processing remove_passenger for trip ${trip_id}, passenger user_id: ${user_id}`);
+        // Solo el conductor del viaje puede remover pasajeros
+        if (tripData?.driver_uid !== uid && tripData?.driver_id !== uid) {
+          console.log(`[Remove Passenger] ERROR: User ${uid} is not the driver (driver_uid: ${tripData?.driver_uid}, driver_id: ${tripData?.driver_id})`);
+          return res.status(403).json({ error: "Only the driver can remove passengers" });
+        }
+
+        if (!user_id) {
+          return res.status(400).json({ error: "user_id is required to identify the passenger to remove" });
+        }
+
+        console.log(`[Remove Passenger] Driver ${uid} removing passenger with user_id: ${user_id} from trip ${trip_id}`);
+
+        // Buscar y remover de passenger_list
+        const passengers = Array.isArray((tripData as any).passenger_list)
+          ? [...(tripData as any).passenger_list]
+          : [];
+
+        const passengerIndex = passengers.findIndex((p: any) => {
+          if (typeof p === "string") {
+            return p === user_id;
+          }
+          if (p && typeof p === "object") {
+            return p.user_id === user_id;
+          }
+          return false;
+        });
+
+        let removedFromPassengerList = false;
+        let removedPassengerUid: string | null = null;
+        if (passengerIndex !== -1) {
+          const removedPassenger = passengers.splice(passengerIndex, 1)[0];
+          removedFromPassengerList = true;
+          if (removedPassenger && typeof removedPassenger === "object" && removedPassenger.firebase_uid) {
+            removedPassengerUid = removedPassenger.firebase_uid;
+          }
+          console.log(`[Remove Passenger] Removed from passenger_list at index ${passengerIndex}, firebase_uid: ${removedPassengerUid}`);
+        }
+
+        // Buscar y remover de waitlist
+        const waitlist = Array.isArray(tripData?.waitlist) ? [...tripData.waitlist] : [];
+        const waitlistIndex = waitlist.findIndex((w: any) => {
+          if (typeof w === "string") {
+            return w === user_id;
+          }
+          if (w && typeof w === "object") {
+            return w.user_id === user_id;
+          }
+          return false;
+        });
+
+        let removedFromWaitlist = false;
+        if (waitlistIndex !== -1) {
+          const removedFromWaitlistEntry = waitlist.splice(waitlistIndex, 1)[0];
+          removedFromWaitlist = true;
+          if (!removedPassengerUid && removedFromWaitlistEntry && typeof removedFromWaitlistEntry === "object" && removedFromWaitlistEntry.firebase_uid) {
+            removedPassengerUid = removedFromWaitlistEntry.firebase_uid;
+          }
+          console.log(`[Remove Passenger] Removed from waitlist at index ${waitlistIndex}`);
+        }
+
+        // Si no se encontró en ninguna lista, retornar error
+        if (!removedFromPassengerList && !removedFromWaitlist) {
+          return res.status(404).json({ 
+            error: "Passenger not found in waitlist or passenger_list",
+            debug: {
+              user_id,
+              passenger_list_length: passengers.length,
+              waitlist_length: waitlist.length
+            }
+          });
+        }
+
+        // Verificar si el viaje estaba cerrado y ahora debe reabrirse
+        const seatsAvailable = Number(tripData?.seats || 0);
+        const passengersCount = passengers.length;
+        const shouldReopenTrip = tripData?.status === "closed" && passengersCount < seatsAvailable;
+
+        // Actualizar el viaje (remover de ambas listas si es necesario)
+        const updateData: any = {
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (removedFromPassengerList) {
+          updateData.passenger_list = passengers;
+        }
+
+        if (removedFromWaitlist) {
+          updateData.waitlist = waitlist;
+        }
+
+        if (shouldReopenTrip) {
+          updateData.status = "open";
+          console.log(`[Remove Passenger] Trip ${trip_id} reopened: ${passengersCount} passengers < ${seatsAvailable} seats`);
+        }
+
+        await tripRef.update(updateData);
+        console.log(`[Remove Passenger] Updated trip ${trip_id} - passenger_list: ${passengers.length}, waitlist: ${waitlist.length}`);
+
+        // Actualizar estado en my_trips del pasajero a "cancelled"
+        if (removedPassengerUid) {
+          try {
+            const passengerUserRef = db.collection("users").doc(removedPassengerUid);
+            const passengerUserDoc = await passengerUserRef.get();
+            
+            if (passengerUserDoc.exists) {
+              const passengerUserData = passengerUserDoc.data();
+              const myTrips = Array.isArray(passengerUserData?.my_trips) ? [...passengerUserData.my_trips] : [];
+              
+              const updatedTrips = myTrips.map((item: any) => {
+                if (typeof item === "string") {
+                  // Formato antiguo: convertir a objeto con estado cancelled
+                  if (item === trip_id) {
+                    return {
+                      trip_id: trip_id,
+                      firebase_uid: removedPassengerUid,
+                      user_id: user_id,
+                      status: "cancelled",
+                      cancelledAt: new Date().toISOString(),
+                      cancelledBy: "driver",
+                    };
+                  }
+                  return item;
+                }
+                if (item && typeof item === "object" && item.trip_id === trip_id) {
+                  // Actualizar el estado a "cancelled"
+                  return {
+                    ...item,
+                    status: "cancelled",
+                    cancelledAt: new Date().toISOString(),
+                    cancelledBy: "driver",
+                  };
+                }
+                return item;
+              });
+
+              await passengerUserRef.update({
+                my_trips: updatedTrips,
+                updatedAt: new Date().toISOString(),
+              });
+              console.log(`[Remove Passenger] Updated my_trips for passenger ${removedPassengerUid}, trip ${trip_id} to cancelled`);
+            } else {
+              console.log(`[Remove Passenger] Passenger user document ${removedPassengerUid} not found`);
+            }
+          } catch (userUpdateError: any) {
+            console.error(`[Remove Passenger] Error updating passenger ${removedPassengerUid} my_trips:`, userUpdateError);
+            // No fallar la operación principal si falla la actualización del usuario
+          }
+        } else {
+          console.log(`[Remove Passenger] Could not extract passenger firebase_uid`);
+        }
+
+        console.log(`[Remove Passenger] Driver ${uid} removed passenger ${user_id} from trip ${trip_id}`);
+
+        return res.status(200).json({
+          message: "Passenger removed successfully",
+          removed_from_passenger_list: removedFromPassengerList,
+          removed_from_waitlist: removedFromWaitlist,
+          passenger_list: passengers,
+          waitlist: waitlist,
+        });
+      }
+
+      // Acción "cancel_passenger": un pasajero cancela su participación (puede estar en waitlist o passenger_list)
+      if (action === "cancel_passenger") {
+        // Obtener user_id del usuario autenticado
+        const userRef = db.collection("users").doc(uid);
+        const userDoc = await userRef.get();
+        let passengerUserId: string | null = null;
+        
+        if (userDoc.exists) {
+          const userData = userDoc.data() as any;
+          passengerUserId = userData?.user_id || null;
+        }
+
+        if (!passengerUserId) {
+          return res.status(400).json({ error: "User ID not found. Please ensure your profile is complete." });
+        }
+
+        console.log(`[Cancel Passenger] Looking for passenger with user_id: ${passengerUserId}, firebase_uid: ${uid} in trip ${trip_id}`);
+
+        // Buscar y remover de passenger_list
+        const passengers = Array.isArray((tripData as any).passenger_list)
+          ? [...(tripData as any).passenger_list]
+          : [];
+
+        const passengerIndex = passengers.findIndex((p: any) => {
+          if (typeof p === "string") {
+            return p === passengerUserId;
+          }
+          if (p && typeof p === "object") {
+            return (p.user_id === passengerUserId || p.firebase_uid === uid);
+          }
+          return false;
+        });
+
+        let removedFromPassengerList = false;
+        if (passengerIndex !== -1) {
+          passengers.splice(passengerIndex, 1);
+          removedFromPassengerList = true;
+          console.log(`[Cancel Passenger] Removed from passenger_list at index ${passengerIndex}`);
+        }
+
+        // Buscar y remover de waitlist
+        const waitlist = Array.isArray(tripData?.waitlist) ? [...tripData.waitlist] : [];
+        const waitlistIndex = waitlist.findIndex((w: any) => {
+          if (typeof w === "string") {
+            return w === passengerUserId;
+          }
+          if (w && typeof w === "object") {
+            return (w.user_id === passengerUserId || w.firebase_uid === uid);
+          }
+          return false;
+        });
+
+        let removedFromWaitlist = false;
+        if (waitlistIndex !== -1) {
+          waitlist.splice(waitlistIndex, 1);
+          removedFromWaitlist = true;
+          console.log(`[Cancel Passenger] Removed from waitlist at index ${waitlistIndex}`);
+        }
+
+        // Si no se encontró en ninguna lista, retornar error
+        if (!removedFromPassengerList && !removedFromWaitlist) {
+          return res.status(404).json({ 
+            error: "Passenger not found in waitlist or passenger_list",
+            debug: {
+              passengerUserId,
+              firebase_uid: uid,
+              passenger_list_length: passengers.length,
+              waitlist_length: waitlist.length
+            }
+          });
+        }
+
+        // Verificar si el viaje estaba cerrado y ahora debe reabrirse
+        const seatsAvailable = Number(tripData?.seats || 0);
+        const passengersCount = passengers.length;
+        const shouldReopenTrip = tripData?.status === "closed" && passengersCount < seatsAvailable;
+
+        // Actualizar el viaje (remover de ambas listas si es necesario)
+        const updateData: any = {
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (removedFromPassengerList) {
+          updateData.passenger_list = passengers;
+        }
+
+        if (removedFromWaitlist) {
+          updateData.waitlist = waitlist;
+        }
+
+        if (shouldReopenTrip) {
+          updateData.status = "open";
+          console.log(`[Cancel Passenger] Trip ${trip_id} reopened: ${passengersCount} passengers < ${seatsAvailable} seats`);
+        }
+
+        await tripRef.update(updateData);
+        console.log(`[Cancel Passenger] Updated trip ${trip_id} - passenger_list: ${passengers.length}, waitlist: ${waitlist.length}`);
+
+        // Remover completamente el viaje de my_trips del usuario
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+          const myTrips = Array.isArray(userData?.my_trips) ? [...userData.my_trips] : [];
+          console.log(`[Cancel Passenger] Current my_trips length: ${myTrips.length}`);
+          
+          const updatedTrips = myTrips.filter((item: any) => {
+            if (typeof item === "string") {
+              return item !== trip_id; // Remover si es el trip_id
+            }
+            if (item && typeof item === "object" && item.trip_id === trip_id) {
+              console.log(`[Cancel Passenger] Removing trip object from my_trips:`, item);
+              return false; // Remover este viaje completamente
+            }
+            return true; // Mantener los demás viajes
+          });
+
+          console.log(`[Cancel Passenger] Updated my_trips length: ${updatedTrips.length}`);
+
+          await userRef.update({
+            my_trips: updatedTrips,
+            updatedAt: new Date().toISOString(),
+          });
+          console.log(`[Cancel Passenger] Removed trip ${trip_id} from my_trips for user ${uid}`);
+        }
+
+        console.log(`[Cancel Passenger] User ${uid} cancelled participation in trip ${trip_id}`);
+
+        return res.status(200).json({
+          message: "Passenger participation cancelled successfully",
+          removed_from_passenger_list: removedFromPassengerList,
+          removed_from_waitlist: removedFromWaitlist,
+          passenger_list: passengers,
+          waitlist: waitlist,
+        });
+      }
+
+      // Para las demás acciones (accept, apply), user_id es requerido
+      if (!user_id) {
+        return res.status(400).json({ error: "user_id is required" });
+      }
       
       // Registro completo de la aplicación (se reutiliza para waitlist y my_trips)
       const applicationRecord: any = {
@@ -618,12 +1012,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.log(`[Accept] Could not extract passengerUid from entry`);
         }
 
-        // Actualizar el trip (waitlist y passenger_list)
-        await tripRef.update({
+        // Verificar si se alcanzó el número máximo de asientos disponibles
+        const seatsAvailable = Number(tripData?.seats || 0);
+        const passengersCount = passengers.length;
+        const shouldCloseTrip = passengersCount >= seatsAvailable;
+
+        // Actualizar el trip (waitlist, passenger_list y status si es necesario)
+        const updateData: any = {
           waitlist,
           passenger_list: passengers,
           updatedAt: new Date().toISOString(),
-        });
+        };
+
+        if (shouldCloseTrip && tripData?.status === "open") {
+          updateData.status = "closed";
+          console.log(`[Accept] Trip ${trip_id} closed: ${passengersCount} passengers >= ${seatsAvailable} seats`);
+        }
+
+        await tripRef.update(updateData);
 
         return res.status(200).json({
           message: "User moved to passenger_list",
@@ -634,7 +1040,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Acción por defecto: aplicar al viaje (agregar a waitlist)
       // Verificar si el usuario es el conductor del viaje (no puede aplicarse a su propio viaje)
+      console.log(`[PATCH /api/trips] Default action (apply) - driver_uid: ${tripData?.driver_uid}, driver_id: ${tripData?.driver_id}, uid: ${uid}`);
       if (tripData?.driver_uid === uid || tripData?.driver_id === uid) {
+        console.log(`[PATCH /api/trips] ERROR: User ${uid} trying to apply to their own trip ${trip_id}`);
         return res.status(400).json({ error: "You cannot apply to your own trip" });
       }
 
