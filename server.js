@@ -29,6 +29,7 @@ const tripsHandler = require('./dist/api/trips.js').default;
 const healthHandler = require('./dist/api/health.js').default;
 const contactHandler = require('./dist/api/contact.js').default;
 const notificationsHandler = require('./dist/api/notifications.js').default;
+const usersPhoneHandler = require('./dist/api/users/phone.js').default;
 
 const PORT = process.env.PORT || 3001;
 
@@ -206,12 +207,16 @@ const server = http.createServer(async (req, res) => {
       return await notificationsHandler(vercelReq, vercelRes);
     }
 
+    if (pathname === '/api/users/phone') {
+      return await usersPhoneHandler(vercelReq, vercelRes);
+    }
+
     // 404 por defecto para rutas API desconocidas
     if (pathname.startsWith('/api/')) {
       console.error(`❌ Ruta API no encontrada: ${pathname}`);
       console.error(`   Ruta original: ${rawPath}`);
       console.error(
-        `   Rutas disponibles: /api/health, /api/items, /api/auth/*, /api/me, /api/vehicles, /api/trips, /api/notifications`
+        `   Rutas disponibles: /api/health, /api/items, /api/auth/*, /api/me, /api/vehicles, /api/trips, /api/notifications, /api/users/phone`
       );
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(
@@ -233,7 +238,8 @@ const server = http.createServer(async (req, res) => {
             '/api/me',
             '/api/vehicles',
             '/api/trips',
-            '/api/notifications'
+            '/api/notifications',
+            '/api/users/phone'
           ]
         })
       );
