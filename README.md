@@ -1,3 +1,17 @@
+[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/8V_b4q_9)
+
+# Entrega final DSAW:
+
+## URL Frontend: https://front-rouge-two.vercel.app/pages/login/landing
+
+## URL Backend: https://back-zeta-cyan.vercel.app
+
+## Nombre estudiante 1: Esteban Sequeda Henao (0000328378)
+
+## Nombre estudiante 2: Sofy Alejandra Prada Murillo (0000336152)
+
+# MODIFIQUE ESTE README AGREGANDO LA INFORMACIÓN QUE CONSIDERE PERTINENTE
+
 # MoveTogether2 Backend
 
 API REST para la aplicación de viajes compartidos MoveTogether. Proporciona endpoints para autenticación, gestión de usuarios, vehículos, viajes y notificaciones.
@@ -61,38 +75,40 @@ npm run serve
 
 El servidor estará disponible en `http://localhost:3001`
 
-### Despliegue en Vercel
+## Endpoints Disponibles
 
-```bash
-# Desarrollo con Vercel CLI
-npm run serve:vercel
+### Autenticación
+- `POST /api/auth/login` - Iniciar sesión
+- `POST /api/auth/register` - Registrar nuevo usuario
+- `POST /api/auth/verify` - Verificar token
+- `POST /api/auth/google` - Autenticación con Google
+- `POST /api/auth/reset-password` - Restablecer contraseña
 
-# Despliegue a producción
-vercel --prod
-```
+### Usuarios
+- `GET /api/me` - Obtener información del usuario actual
+- `GET /api/users/phone?firebase_uid=...` - Obtener número de teléfono
 
-### Ejemplo de Uso
+### Viajes
+- `GET /api/trips` - Listar viajes (con filtros opcionales)
+- `POST /api/trips` - Crear nuevo viaje
+- `PATCH /api/trips` - Aplicar a viaje, aceptar pasajero, cancelar, etc.
 
-**Health Check:**
-```bash
-curl http://localhost:3001/api/health
-```
+### Vehículos
+- `GET /api/vehicles` - Listar vehículos del usuario
+- `POST /api/vehicles` - Registrar nuevo vehículo
+- `DELETE /api/vehicles/:id` - Eliminar vehículo
 
-**Respuesta:**
-```json
-{
-  "ok": true,
-  "timestamp": "2025-11-17T22:00:46.905Z"
-}
-```
+### Notificaciones
+- `GET /api/notifications` - Obtener notificaciones del usuario
 
-**Obtener información del usuario autenticado:**
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:3001/api/me
-```
+### WhatsApp
+- `GET /api/whatsapp` - Inicializar sesión de WhatsApp
+- `POST /api/whatsapp` - Enviar mensaje por WhatsApp
 
+### Utilidades
+- `GET /api/health` - Health check del servidor
 
-### Desarrolladores
+## Contacto
 
 **Esteban Sequeda Henao**  
 - Código: 0000328378  
@@ -102,12 +118,18 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:3001/api/me
 - Código: 0000336152  
 - Email: sofyprmu@unisabana.edu.co
 
-### Soporte
+---
 
-- **Frontend desplegado:** [https://front-rouge-two.vercel.app/pages/login/landing](https://front-rouge-two.vercel.app/pages/login/landing)
-- **Backend desplegado:** [https://back-zeta-cyan.vercel.app](https://back-zeta-cyan.vercel.app)
+# Reglas
+
+- Recuerde subir su código antes del 17 de noviembre de 2025, 11:59PM
+
+- No se adminten entregas tardías
+
+- Si la entrega final no está desplegada, no se califica
+
+- Si hay modificaciones luego de la fecha establecida, no se calificará la parte técnica
 
 ---
 
 **Universidad de La Sabana** - Proyecto académico
-
