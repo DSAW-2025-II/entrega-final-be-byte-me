@@ -765,6 +765,320 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // Acción "start_trip": iniciar el viaje (solo el conductor puede hacerlo)
+      if (action === "start_trip") {
+        console.log("▶️ PATCH /api/trips action=start_trip", { trip_id, uid });
+
+        // Solo el conductor del viaje puede iniciar
+        if (tripData?.driver_uid !== uid && tripData?.driver_id !== uid) {
+          console.log("⛔ start_trip: user is not driver", {
+            driver_uid: tripData?.driver_uid,
+            driver_id: tripData?.driver_id,
+            current_uid: uid,
+          });
+          return res.status(403).json({ error: "Only the driver can start the trip" });
+        }
+
+        // Normalizar estado actual (si viene undefined, tratarlo como "open")
+        const currentStatus = tripData?.status || "open";
+        console.log("ℹ️ start_trip currentStatus:", currentStatus, "trip_id:", trip_id);
+
+        // Permitir iniciar si está "open" o "closed" (pero "closed" solo si tiene pasajeros)
+        const passengers = Array.isArray((tripData as any).passenger_list) ? [...(tripData as any).passenger_list] : [];
+        const hasPassengers = passengers.length > 0;
+
+        if (currentStatus !== "open" && currentStatus !== "closed") {
+          return res.status(400).json({ 
+            error: "Solo se pueden iniciar viajes abiertos o cerrados" 
+          });
+        }
+
+        // Si está "closed" pero no tiene pasajeros, no se puede iniciar
+        if (currentStatus === "closed" && !hasPassengers) {
+          return res.status(400).json({ 
+            error: "No se puede iniciar un viaje cerrado sin pasajeros confirmados" 
+          });
+        }
+
+        // Exigir que haya al menos un pasajero aceptado
+        if (passengers.length === 0) {
+          return res.status(400).json({ error: "No se puede iniciar un viaje sin pasajeros confirmados" });
+        }
+
+        // Actualizar el estado del viaje a "in_progress"
+        await tripRef.update({
+          status: "in_progress",
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+
+        console.log("✅ Trip status set to in_progress:", trip_id);
+
+        // Actualizar my_trips de cada pasajero
+        const passengerUids = new Set<string>();
+        passengers.forEach((p: any) => {
+          if (p && typeof p === "object" && p.firebase_uid) {
+            passengerUids.add(p.firebase_uid);
+          }
+        });
+
+        console.log(`[Start Trip] Trip ${trip_id} started by driver ${uid}, updating ${passengerUids.size} passengers`);
+
+        // Actualizar my_trips de cada pasajero
+        const updatePromises = Array.from(passengerUids).map(async (passengerUid) => {
+          try {
+            const passengerUserRef = db.collection("users").doc(passengerUid);
+            const passengerUserDoc = await passengerUserRef.get();
+            
+            if (passengerUserDoc.exists) {
+              const passengerUserData = passengerUserDoc.data();
+              const myTrips = Array.isArray(passengerUserData?.my_trips) ? [...passengerUserData.my_trips] : [];
+              
+              const updatedTrips = myTrips.map((item: any) => {
+                if (typeof item === "string") {
+                  if (item === trip_id) {
+                    return {
+                      trip_id: trip_id,
+                      firebase_uid: passengerUid,
+                      status: "in_progress",
+                    };
+                  }
+                  return item;
+                }
+                if (item && typeof item === "object" && item.trip_id === trip_id) {
+                  return {
+                    ...item,
+                    status: "in_progress",
+                  };
+                }
+                return item;
+              });
+
+              await passengerUserRef.update({
+                my_trips: updatedTrips,
+                updatedAt: new Date().toISOString(),
+              });
+              console.log(`[Start Trip] Updated my_trips for passenger ${passengerUid}, trip ${trip_id} to in_progress`);
+            }
+          } catch (error: any) {
+            console.error(`[Start Trip] Error updating passenger ${passengerUid} my_trips:`, error);
+          }
+        });
+
+        await Promise.all(updatePromises);
+
+        // Actualizar también my_trips del conductor si tiene entradas para este viaje
+        try {
+          const driverUserRef = db.collection("users").doc(uid);
+          const driverUserDoc = await driverUserRef.get();
+          
+          if (driverUserDoc.exists) {
+            const driverUserData = driverUserDoc.data();
+            const myTrips = Array.isArray(driverUserData?.my_trips) ? [...driverUserData.my_trips] : [];
+            
+            const updatedTrips = myTrips.map((item: any) => {
+              if (typeof item === "string") {
+                if (item === trip_id) {
+                  return {
+                    trip_id: trip_id,
+                    firebase_uid: uid,
+                    status: "in_progress",
+                  };
+                }
+                return item;
+              }
+              if (item && typeof item === "object" && item.trip_id === trip_id) {
+                return {
+                  ...item,
+                  status: "in_progress",
+                };
+              }
+              return item;
+            });
+
+            await driverUserRef.update({
+              my_trips: updatedTrips,
+              updatedAt: new Date().toISOString(),
+            });
+            console.log(`[Start Trip] Updated my_trips for driver ${uid}, trip ${trip_id} to in_progress`);
+          }
+        } catch (error: any) {
+          console.error(`[Start Trip] Error updating driver ${uid} my_trips:`, error);
+        }
+
+        // Crear notificaciones para los pasajeros
+        const tripTitle =
+          (typeof tripData?.destination?.address === "string" && tripData.destination.address) ||
+          (typeof tripData?.start?.address === "string" && tripData.start.address) ||
+          "tu viaje";
+
+        const notificationPromises = Array.from(passengerUids).map(async (passengerUid) => {
+          await createUserNotification(db, {
+            uidDestino: passengerUid,
+            type: "tripApplication",
+            tripId: trip_id,
+            message: `El viaje "${tripTitle}" ha iniciado.`,
+            payload: {
+              tripId: trip_id,
+              startedBy: uid,
+            },
+          });
+        });
+
+        await Promise.all(notificationPromises);
+
+        console.log(`[Start Trip] Trip ${trip_id} started by driver ${uid}`);
+
+        return res.status(200).json({
+          message: "Trip started",
+          trip_id,
+          new_status: "in_progress",
+        });
+      }
+
+      // Acción "finish_trip": finalizar el viaje (solo el conductor puede hacerlo)
+      if (action === "finish_trip") {
+        // Solo el conductor del viaje puede finalizar
+        if (tripData?.driver_uid !== uid && tripData?.driver_id !== uid) {
+          return res.status(403).json({ error: "Only the driver can finish the trip" });
+        }
+
+        // Solo se puede finalizar si el viaje está en progreso
+        if (tripData?.status !== "in_progress") {
+          return res.status(400).json({ error: "Only trips in progress can be finished" });
+        }
+
+        const passengers = Array.isArray((tripData as any).passenger_list) ? [...(tripData as any).passenger_list] : [];
+
+        // Actualizar el estado del viaje a "finished"
+        await tripRef.update({
+          status: "finished",
+          finishedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+
+        // Actualizar my_trips de cada pasajero
+        const passengerUids = new Set<string>();
+        passengers.forEach((p: any) => {
+          if (p && typeof p === "object" && p.firebase_uid) {
+            passengerUids.add(p.firebase_uid);
+          }
+        });
+
+        console.log(`[Finish Trip] Trip ${trip_id} finished by driver ${uid}, updating ${passengerUids.size} passengers`);
+
+        // Actualizar my_trips de cada pasajero
+        const updatePromises = Array.from(passengerUids).map(async (passengerUid) => {
+          try {
+            const passengerUserRef = db.collection("users").doc(passengerUid);
+            const passengerUserDoc = await passengerUserRef.get();
+            
+            if (passengerUserDoc.exists) {
+              const passengerUserData = passengerUserDoc.data();
+              const myTrips = Array.isArray(passengerUserData?.my_trips) ? [...passengerUserData.my_trips] : [];
+              
+              const updatedTrips = myTrips.map((item: any) => {
+                if (typeof item === "string") {
+                  if (item === trip_id) {
+                    return {
+                      trip_id: trip_id,
+                      firebase_uid: passengerUid,
+                      status: "finished",
+                    };
+                  }
+                  return item;
+                }
+                if (item && typeof item === "object" && item.trip_id === trip_id) {
+                  return {
+                    ...item,
+                    status: "finished",
+                  };
+                }
+                return item;
+              });
+
+              await passengerUserRef.update({
+                my_trips: updatedTrips,
+                updatedAt: new Date().toISOString(),
+              });
+              console.log(`[Finish Trip] Updated my_trips for passenger ${passengerUid}, trip ${trip_id} to finished`);
+            }
+          } catch (error: any) {
+            console.error(`[Finish Trip] Error updating passenger ${passengerUid} my_trips:`, error);
+          }
+        });
+
+        await Promise.all(updatePromises);
+
+        // Actualizar también my_trips del conductor si tiene entradas para este viaje
+        try {
+          const driverUserRef = db.collection("users").doc(uid);
+          const driverUserDoc = await driverUserRef.get();
+          
+          if (driverUserDoc.exists) {
+            const driverUserData = driverUserDoc.data();
+            const myTrips = Array.isArray(driverUserData?.my_trips) ? [...driverUserData.my_trips] : [];
+            
+            const updatedTrips = myTrips.map((item: any) => {
+              if (typeof item === "string") {
+                if (item === trip_id) {
+                  return {
+                    trip_id: trip_id,
+                    firebase_uid: uid,
+                    status: "finished",
+                  };
+                }
+                return item;
+              }
+              if (item && typeof item === "object" && item.trip_id === trip_id) {
+                return {
+                  ...item,
+                  status: "finished",
+                };
+              }
+              return item;
+            });
+
+            await driverUserRef.update({
+              my_trips: updatedTrips,
+              updatedAt: new Date().toISOString(),
+            });
+            console.log(`[Finish Trip] Updated my_trips for driver ${uid}, trip ${trip_id} to finished`);
+          }
+        } catch (error: any) {
+          console.error(`[Finish Trip] Error updating driver ${uid} my_trips:`, error);
+        }
+
+        // Crear notificaciones para los pasajeros
+        const tripTitle =
+          (typeof tripData?.destination?.address === "string" && tripData.destination.address) ||
+          (typeof tripData?.start?.address === "string" && tripData.start.address) ||
+          "tu viaje";
+
+        const notificationPromises = Array.from(passengerUids).map(async (passengerUid) => {
+          await createUserNotification(db, {
+            uidDestino: passengerUid,
+            type: "tripApplication",
+            tripId: trip_id,
+            message: `El viaje "${tripTitle}" ha finalizado.`,
+            payload: {
+              tripId: trip_id,
+              finishedBy: uid,
+            },
+          });
+        });
+
+        await Promise.all(notificationPromises);
+
+        console.log(`[Finish Trip] Trip ${trip_id} finished by driver ${uid}`);
+
+        return res.status(200).json({
+          message: "Trip finished",
+          trip_id,
+          new_status: "finished",
+        });
+      }
+
       // Acción "remove_passenger": el conductor remueve a un pasajero específico
       console.log(`[PATCH /api/trips] Checking action "${action}" === "remove_passenger": ${action === "remove_passenger"}`);
       if (action === "remove_passenger") {
@@ -1320,11 +1634,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Acción por defecto: aplicar al viaje (agregar a waitlist)
-      // Verificar si el usuario es el conductor del viaje (no puede aplicarse a su propio viaje)
+      // Ya no bloqueamos que el usuario aplique a su propio viaje
       console.log(`[PATCH /api/trips] Default action (apply) - driver_uid: ${tripData?.driver_uid}, driver_id: ${tripData?.driver_id}, uid: ${uid}`);
+      
+      // Log opcional cuando el conductor aplica a su propio viaje
       if (tripData?.driver_uid === uid || tripData?.driver_id === uid) {
-        console.log(`[PATCH /api/trips] ERROR: User ${uid} trying to apply to their own trip ${trip_id}`);
-        return res.status(400).json({ error: "You cannot apply to your own trip" });
+        console.log(`ℹ️ El conductor está aplicando a su propio viaje (permitido). trip_id = ${trip_id}, uid = ${uid}`);
+      }
+      
+      // Verificar si el usuario ya está en waitlist o passenger_list para evitar duplicados
+      const alreadyInWaitlist = waitlist.some((item: any) => {
+        if (typeof item === "string") return item === user_id;
+        if (item && typeof item === "object") {
+          return (item.user_id === user_id || item.firebase_uid === uid);
+        }
+        return false;
+      });
+      
+      const passengers = Array.isArray((tripData as any).passenger_list) ? [...(tripData as any).passenger_list] : [];
+      const alreadyPassenger = passengers.some((p: any) => {
+        if (typeof p === "string") return p === user_id;
+        if (p && typeof p === "object") {
+          return (p.user_id === user_id || p.firebase_uid === uid);
+        }
+        return false;
+      });
+
+      if (alreadyInWaitlist || alreadyPassenger) {
+        return res.status(200).json({ 
+          message: "User already applied or is passenger", 
+          trip_id,
+          alreadyInWaitlist,
+          alreadyPassenger
+        });
       }
 
       // Verificar que el viaje no esté cerrado
@@ -1333,9 +1675,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Verificar cupos disponibles antes de permitir la aplicación
-      const passengers = Array.isArray((tripData as any).passenger_list)
-        ? [...(tripData as any).passenger_list]
-        : [];
+      // Reutilizamos la variable passengers ya declarada arriba
       const seatsAvailable = Number(tripData?.seats || 0);
       const occupiedSeatsInPassengerList = passengers.length;
       const occupiedSeatsInWaitlist = waitlist.length;
